@@ -128,8 +128,18 @@ private:
         m_originalImg = img;
 
         // Initial scaled bitmap
-        wxImage scaled = img.Scale(800, 600, wxIMAGE_QUALITY_HIGH);
+        int initW = 800;
+        int initH = 600;
+        wxImage scaled = img.Scale(initW, initH, wxIMAGE_QUALITY_HIGH);
         m_bitmap = wxBitmap(scaled);
+
+        // ✅ Correctly set zoomFactor to match what’s displayed
+        m_zoomFactor = static_cast<double>(initW) / m_originalImg.GetWidth();
+
+        // ✅ Update status bar immediately
+        wxString zoomStr;
+        zoomStr.Printf("Zoom: %.0f%%", m_zoomFactor * 100);
+        SetStatusText(zoomStr, 1);
     }
 
     void OnZoomIn(wxCommandEvent& event)
