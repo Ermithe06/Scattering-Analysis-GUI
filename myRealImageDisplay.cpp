@@ -1,4 +1,4 @@
-#include <wx/wx.h>
+﻿#include <wx/wx.h>
 #include <wx/artprov.h>
 #include <wx/xrc/xmlres.h>
 #include <wx/intl.h>
@@ -18,6 +18,8 @@
 #include <wx/filename.h>
 #include <fstream>
 #include <vector>
+
+using namespace std;
 
 // ================================================================
 // Constants from your EDF header
@@ -46,16 +48,16 @@ public:
         m_imagepanel1 = new wxPanel(this, wxID_ANY);
         vbox->Add(m_imagepanel1, 1, wxEXPAND);
 
-        // Horizontal box for buttons
-        wxBoxSizer* hbox = new wxBoxSizer(wxHORIZONTAL);
+        // ✅ Toolbar
+        wxToolBar* toolbar = CreateToolBar();
+        toolbar->AddTool(wxID_ZOOM_IN, "Zoom In", wxArtProvider::GetBitmap(wxART_PLUS, wxART_TOOLBAR));
+        toolbar->AddTool(wxID_ZOOM_OUT, "Zoom Out", wxArtProvider::GetBitmap(wxART_MINUS, wxART_TOOLBAR));
+        toolbar->Realize();
 
-        wxButton* zoomInBtn = new wxButton(this, wxID_ANY, "Zoom In");
-        wxButton* zoomOutBtn = new wxButton(this, wxID_ANY, "Zoom Out");
-
-        hbox->Add(zoomInBtn, 0, wxALL, 5);
-        hbox->Add(zoomOutBtn, 0, wxALL, 5);
-
-        vbox->Add(hbox, 0, wxALIGN_CENTER);
+        // ✅ Status bar (2 fields: pixel info + zoom level)
+        CreateStatusBar(2);
+        SetStatusText("Ready", 0);
+        SetStatusText("Zoom: 100%", 1);
 
         SetSizer(vbox);
 
@@ -63,8 +65,10 @@ public:
 
         // Bind events
         m_imagepanel1->Bind(wxEVT_PAINT, &ImageFrame::OnPaint, this);
-        zoomInBtn->Bind(wxEVT_BUTTON, &ImageFrame::OnZoomIn, this);
-        zoomOutBtn->Bind(wxEVT_BUTTON, &ImageFrame::OnZoomOut, this);
+        m_imagepanel1->Bind(wxEVT_MOTION, &ImageFrame::OnMouseMove, this);
+
+        Bind(wxEVT_TOOL, &ImageFrame::OnZoomIn, this, wxID_ZOOM_IN);
+        Bind(wxEVT_TOOL, &ImageFrame::OnZoomOut, this, wxID_ZOOM_OUT);
 
         this->Centre();
     }
@@ -80,17 +84,17 @@ private:
 
     void LoadImage(const wxString& filepath)
     {
-        std::ifstream file(filepath.mb_str().data(), std::ios::binary);
+        std::ifstream file(filepath.mb_str().data(), ios::binary);
         if (!file) return;
 
         // Skip header
-        file.seekg(HEADER_OFFSET, std::ios::beg);
+        file.seekg(HEADER_OFFSET, ios::beg);
 
         // Read raw pixel data
         std::vector<unsigned char> buffer(WIDTH * HEIGHT * PIXEL_DEPTH);
         file.read(reinterpret_cast<char*>(buffer.data()), buffer.size());
 
-        if (file.gcount() < (std::streamsize)buffer.size())
+        if (file.gcount() < (streamsize)buffer.size())
         {
             wxLogError("File too small or truncated: %s", filepath);
             return;
@@ -150,6 +154,11 @@ private:
         m_bitmap = wxBitmap(scaled);
 
         m_imagepanel1->Refresh();
+
+        // Update status bar
+        wxString zoomStr;
+        zoomStr.Printf("Zoom: %.0f%%", m_zoomFactor * 100);
+        SetStatusText(zoomStr, 1);
     }
 
     void OnPaint(wxPaintEvent& event)
@@ -157,6 +166,29 @@ private:
         wxPaintDC dc(m_imagepanel1);
         if (m_bitmap.IsOk())
             dc.DrawBitmap(m_bitmap, 0, 0, true);
+    }
+
+    void OnMouseMove(wxMouseEvent& event)
+    {
+        if (!m_bitmap.IsOk()) return;
+
+        wxPoint pos = event.GetPosition();
+        if (pos.x < 0 || pos.y < 0 || pos.x >= m_bitmap.GetWidth() || pos.y >= m_bitmap.GetHeight())
+            return;
+
+        wxImage img = m_bitmap.ConvertToImage();
+        unsigned char* rgb = img.GetData();
+
+        int idx = (pos.y * img.GetWidth() + pos.x) * 3;
+        unsigned char r = rgb[idx];
+        unsigned char g = rgb[idx + 1];
+        unsigned char b = rgb[idx + 2];
+
+        int intensity = (r + g + b) / 3;
+
+        wxString msg;
+        msg.Printf("x=%d, y=%d, intensity=%d", pos.x, pos.y, intensity);
+        SetStatusText(msg, 0);
     }
 };
 
