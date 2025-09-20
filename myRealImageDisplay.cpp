@@ -1,210 +1,204 @@
-﻿#include <wx/wx.h>
-#include <wx/artprov.h>
-#include <wx/xrc/xmlres.h>
-#include <wx/intl.h>
-#include <wx/string.h>
-#include <wx/stattext.h>
-#include <wx/gdicmn.h>
-#include <wx/font.h>
-#include <wx/colour.h>
-#include <wx/settings.h>
+#include <wx/wx.h>
+#include <wx/scrolwin.h>
+#include <wx/dcbuffer.h>
 #include <wx/filepicker.h>
-#include <wx/sizer.h>
-#include <wx/checklst.h>
-#include <wx/panel.h>
-#include <wx/frame.h>
-#include <wx/aui/aui.h>
 #include <wx/dir.h>
 #include <wx/filename.h>
+#include <wx/listctrl.h>
 #include <fstream>
 #include <vector>
+#include <thread>
+#include <mutex>
 
 using namespace std;
 
-// ================================================================
-// Constants from your EDF header
-// ================================================================
+// Constants
 static const int HEADER_OFFSET = 3072;
 static const int WIDTH = 2082;
 static const int HEIGHT = 2217;
-static const int PIXEL_DEPTH = 4; // RGBA (4 bytes per pixel)
+static const int PIXEL_DEPTH = 4;
 
-// ================================================================
+// Helper: Create labeled bitmap for toolbar
+wxBitmap CreateLabeledBitmap(const wxString& label, int w = 32, int h = 32)
+{
+    wxBitmap bmp(w, h);
+    wxMemoryDC dc(bmp);
+    dc.SetBackground(*wxWHITE_BRUSH);
+    dc.Clear();
+    dc.SetTextForeground(*wxBLACK);
+    wxFont font(10, wxFONTFAMILY_DEFAULT, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_BOLD);
+    dc.SetFont(font);
+    wxSize ts = dc.GetTextExtent(label);
+    dc.DrawText(label, (w - ts.x) / 2, (h - ts.y) / 2);
+    dc.SelectObject(wxNullBitmap);
+    return bmp;
+}
+
+// ImagePanel
+class ImagePanel : public wxScrolledWindow
+{
+public:
+    ImagePanel(wxWindow* parent) : wxScrolledWindow(parent, wxID_ANY)
+    {
+        SetBackgroundStyle(wxBG_STYLE_PAINT);
+        SetBackgroundColour(*wxWHITE);
+        SetScrollRate(10, 10);
+        SetCursor(wxCursor(wxCURSOR_ARROW));
+        Bind(wxEVT_PAINT, &ImagePanel::OnPaint, this);
+    }
+
+    void SetBitmap(const wxBitmap& bmp)
+    {
+        m_bitmap = bmp;
+        if (m_bitmap.IsOk())
+        {
+            SetVirtualSize(m_bitmap.GetWidth(), m_bitmap.GetHeight());
+            Refresh();
+        }
+    }
+
+    void SetHandScrollingEnabled(bool enable)
+    {
+        SetCursor(enable ? wxCursor(wxCURSOR_HAND) : wxCursor(wxCURSOR_ARROW));
+    }
+
+private:
+    wxBitmap m_bitmap;
+
+    void OnPaint(wxPaintEvent&)
+    {
+        wxAutoBufferedPaintDC dc(this);
+        DoPrepareDC(dc);
+        dc.Clear();
+        if (m_bitmap.IsOk())
+            dc.DrawBitmap(m_bitmap, 0, 0, true);
+    }
+};
+
 // ImageFrame
-// ================================================================
 class ImageFrame : public wxFrame
 {
 public:
     ImageFrame(wxWindow* parent, const wxString& filepath)
-        : wxFrame(parent, wxID_ANY, "Image Display Window",
-            wxDefaultPosition, wxSize(820, 750))
+        : wxFrame(parent, wxID_ANY, "Image Viewer", wxDefaultPosition, wxSize(820, 750))
     {
-        m_mgr.SetManagedWindow(this);
-        m_mgr.SetFlags(wxAUI_MGR_DEFAULT);
-
-        // Layout
         wxBoxSizer* vbox = new wxBoxSizer(wxVERTICAL);
+        m_imagepanel = new ImagePanel(this);
+        vbox->Add(m_imagepanel, 1, wxEXPAND);
 
-        m_imagepanel1 = new wxPanel(this, wxID_ANY);
-        vbox->Add(m_imagepanel1, 1, wxEXPAND);
-
-        // ✅ Toolbar
+        // Toolbar
         wxToolBar* toolbar = CreateToolBar();
-        toolbar->AddTool(wxID_ZOOM_IN, "Zoom In", wxArtProvider::GetBitmap(wxART_PLUS, wxART_TOOLBAR));
-        toolbar->AddTool(wxID_ZOOM_OUT, "Zoom Out", wxArtProvider::GetBitmap(wxART_MINUS, wxART_TOOLBAR));
+        toolbar->AddTool(wxID_ZOOM_IN, "Zoom In", CreateLabeledBitmap("+"));
+        toolbar->AddTool(wxID_ZOOM_OUT, "Zoom Out", CreateLabeledBitmap("-"));
+        toolbar->AddTool(wxID_ZOOM_100, "Fit", CreateLabeledBitmap("Fit"));
         toolbar->Realize();
 
-        // ✅ Status bar (2 fields: pixel info + zoom level)
         CreateStatusBar(2);
         SetStatusText("Ready", 0);
-        SetStatusText("Zoom: 100%", 1);
 
         SetSizer(vbox);
 
         LoadImage(filepath);
 
         // Bind events
-        m_imagepanel1->Bind(wxEVT_PAINT, &ImageFrame::OnPaint, this);
-        m_imagepanel1->Bind(wxEVT_MOTION, &ImageFrame::OnMouseMove, this);
+        Bind(wxEVT_TOOL, [this](wxCommandEvent&) { OnZoomIn(); }, wxID_ZOOM_IN);
+        Bind(wxEVT_TOOL, [this](wxCommandEvent&) { OnZoomOut(); }, wxID_ZOOM_OUT);
+        Bind(wxEVT_TOOL, [this](wxCommandEvent&) { OnZoomFit(); }, wxID_ZOOM_100);
+        Bind(wxEVT_SIZE, &ImageFrame::OnResize, this);
+        Bind(wxEVT_CHAR_HOOK, &ImageFrame::OnKeyPress, this);
 
-        Bind(wxEVT_TOOL, &ImageFrame::OnZoomIn, this, wxID_ZOOM_IN);
-        Bind(wxEVT_TOOL, &ImageFrame::OnZoomOut, this, wxID_ZOOM_OUT);
-
-        this->Centre();
+        Centre();
     }
 
-    ~ImageFrame() { m_mgr.UnInit(); }
-
 private:
-    wxPanel* m_imagepanel1;
-    wxAuiManager m_mgr;
+    ImagePanel* m_imagepanel;
+    wxImage m_originalImg;
     wxBitmap m_bitmap;
-    wxImage m_originalImg;   // store original image for scaling
     double m_zoomFactor = 1.0;
+    bool m_fitMode = true;
 
     void LoadImage(const wxString& filepath)
     {
-        std::ifstream file(filepath.mb_str().data(), ios::binary);
+        ifstream file(filepath.mb_str().data(), ios::binary);
         if (!file) return;
-
-        // Skip header
         file.seekg(HEADER_OFFSET, ios::beg);
-
-        // Read raw pixel data
-        std::vector<unsigned char> buffer(WIDTH * HEIGHT * PIXEL_DEPTH);
+        vector<unsigned char> buffer(WIDTH * HEIGHT * PIXEL_DEPTH);
         file.read(reinterpret_cast<char*>(buffer.data()), buffer.size());
+        if (file.gcount() < (streamsize)buffer.size()) return;
 
-        if (file.gcount() < (streamsize)buffer.size())
-        {
-            wxLogError("File too small or truncated: %s", filepath);
-            return;
-        }
-
-        // Create wxImage
-        wxImage img(WIDTH, HEIGHT);
+        wxImage img(WIDTH, HEIGHT, true);
         unsigned char* rgb = img.GetData();
-        img.SetAlpha();
-        unsigned char* alpha = img.GetAlpha();
-
-        // Convert to grayscale
         for (int i = 0; i < WIDTH * HEIGHT; i++)
         {
             unsigned char r = buffer[i * 4 + 2];
             unsigned char g = buffer[i * 4 + 1];
             unsigned char b = buffer[i * 4 + 0];
-            unsigned char a = buffer[i * 4 + 3];
-
-            unsigned char grey = static_cast<unsigned char>(
-                0.299 * r + 0.587 * g + 0.114 * b
-                );
-
-            rgb[i * 3 + 0] = grey;
-            rgb[i * 3 + 1] = grey;
-            rgb[i * 3 + 2] = grey;
-            alpha[i] = a;
+            unsigned char grey = static_cast<unsigned char>(0.299 * r + 0.587 * g + 0.114 * b);
+            rgb[i * 3 + 0] = grey; rgb[i * 3 + 1] = grey; rgb[i * 3 + 2] = grey;
         }
-
-        // Store original for zooming
         m_originalImg = img;
-
-        // Initial scaled bitmap
-        int initW = 800;
-        int initH = 600;
-        wxImage scaled = img.Scale(initW, initH, wxIMAGE_QUALITY_HIGH);
-        m_bitmap = wxBitmap(scaled);
-
-        // ✅ Correctly set zoomFactor to match what’s displayed
-        m_zoomFactor = static_cast<double>(initW) / m_originalImg.GetWidth();
-
-        // ✅ Update status bar immediately
-        wxString zoomStr;
-        zoomStr.Printf("Zoom: %.0f%%", m_zoomFactor * 100);
-        SetStatusText(zoomStr, 1);
-    }
-
-    void OnZoomIn(wxCommandEvent& event)
-    {
-        m_zoomFactor *= 1.2; // zoom in 20%
-        ApplyZoom();
-    }
-
-    void OnZoomOut(wxCommandEvent& event)
-    {
-        m_zoomFactor /= 1.2; // zoom out 20%
-        if (m_zoomFactor < 0.1) m_zoomFactor = 0.1; // minimum size
-        ApplyZoom();
+        FitImage();
     }
 
     void ApplyZoom()
     {
+        if (!m_originalImg.IsOk()) return;
+        wxSize panelSize = m_imagepanel->GetClientSize();
+
+        if (m_fitMode)
+        {
+            double scaleX = (double)panelSize.x / m_originalImg.GetWidth();
+            double scaleY = (double)panelSize.y / m_originalImg.GetHeight();
+            m_zoomFactor = std::min(scaleX, scaleY);
+        }
+
         int newW = static_cast<int>(m_originalImg.GetWidth() * m_zoomFactor);
         int newH = static_cast<int>(m_originalImg.GetHeight() * m_zoomFactor);
 
         wxImage scaled = m_originalImg.Scale(newW, newH, wxIMAGE_QUALITY_HIGH);
         m_bitmap = wxBitmap(scaled);
 
-        m_imagepanel1->Refresh();
+        // Center image inside panel
+        wxBitmap centered(panelSize.x, panelSize.y);
+        {
+            wxMemoryDC dc(centered);
+            dc.SetBackground(*wxWHITE_BRUSH);
+            dc.Clear();
+            int x = (panelSize.x - newW) / 2;
+            int y = (panelSize.y - newH) / 2;
+            dc.DrawBitmap(m_bitmap, std::max(0, x), std::max(0, y), true);
+        }
+        m_imagepanel->SetBitmap(centered);
 
-        // Update status bar
-        wxString zoomStr;
-        zoomStr.Printf("Zoom: %.0f%%", m_zoomFactor * 100);
+        wxString zoomStr = m_fitMode ? "Zoom: Fit" : wxString::Format("Zoom: %.0f%%", m_zoomFactor * 100);
         SetStatusText(zoomStr, 1);
+
+        m_imagepanel->SetHandScrollingEnabled(newW > panelSize.x || newH > panelSize.y);
     }
 
-    void OnPaint(wxPaintEvent& event)
+    void OnZoomIn() { m_zoomFactor *= 1.2; m_fitMode = false; ApplyZoom(); }
+    void OnZoomOut() { m_zoomFactor /= 1.2; if (m_zoomFactor < 0.01)m_zoomFactor = 0.01; m_fitMode = false; ApplyZoom(); }
+    void OnZoomFit() { FitImage(); }
+    void FitImage() { m_fitMode = true; ApplyZoom(); }
+
+    void OnResize(wxSizeEvent& event) { if (m_fitMode) ApplyZoom(); event.Skip(); }
+
+    void OnKeyPress(wxKeyEvent& event)
     {
-        wxPaintDC dc(m_imagepanel1);
-        if (m_bitmap.IsOk())
-            dc.DrawBitmap(m_bitmap, 0, 0, true);
-    }
-
-    void OnMouseMove(wxMouseEvent& event)
-    {
-        if (!m_bitmap.IsOk()) return;
-
-        wxPoint pos = event.GetPosition();
-        if (pos.x < 0 || pos.y < 0 || pos.x >= m_bitmap.GetWidth() || pos.y >= m_bitmap.GetHeight())
-            return;
-
-        wxImage img = m_bitmap.ConvertToImage();
-        unsigned char* rgb = img.GetData();
-
-        int idx = (pos.y * img.GetWidth() + pos.x) * 3;
-        unsigned char r = rgb[idx];
-        unsigned char g = rgb[idx + 1];
-        unsigned char b = rgb[idx + 2];
-
-        int intensity = (r + g + b) / 3;
-
-        wxString msg;
-        msg.Printf("x=%d, y=%d, intensity=%d", pos.x, pos.y, intensity);
-        SetStatusText(msg, 0);
+        if (event.ControlDown())
+        {
+            switch (event.GetKeyCode())
+            {
+            case WXK_ADD: case '=': OnZoomIn(); return;
+            case WXK_SUBTRACT: case '-': OnZoomOut(); return;
+            case '0': OnZoomFit(); return;
+            }
+        }
+        event.Skip();
     }
 };
 
-// ================================================================
 // FileBrowser
-// ================================================================
 class FileBrowser : public wxPanel
 {
 public:
@@ -213,69 +207,157 @@ public:
     {
         wxBoxSizer* vbox = new wxBoxSizer(wxVERTICAL);
 
+        // Folder selection
         wxBoxSizer* hbox = new wxBoxSizer(wxHORIZONTAL);
-        m_staticText1 = new wxStaticText(this, wxID_ANY, "Folder:");
-        hbox->Add(m_staticText1, 0, wxALL, 5);
+        wxStaticText* label = new wxStaticText(this, wxID_ANY, "Folder:");
+        hbox->Add(label, 0, wxALL, 5);
+        m_dirPicker = new wxDirPickerCtrl(this, wxID_ANY);
+        hbox->Add(m_dirPicker, 1, wxALL | wxEXPAND, 5);
+        vbox->Add(hbox, 0, wxEXPAND);
 
-        m_dirPicker1 = new wxDirPickerCtrl(this, wxID_ANY);
-        hbox->Add(m_dirPicker1, 1, wxALL | wxEXPAND, 5);
+        // List control
+        m_listCtrl = new wxListCtrl(this, wxID_ANY, wxDefaultPosition, wxDefaultSize,
+            wxLC_REPORT | wxLC_SINGLE_SEL);
+        m_listCtrl->InsertColumn(0, "Name", wxLIST_FORMAT_LEFT, 200);
+        m_listCtrl->InsertColumn(1, "Type", wxLIST_FORMAT_LEFT, 80);
+        m_listCtrl->InsertColumn(2, "Size", wxLIST_FORMAT_RIGHT, 80);
+        vbox->Add(m_listCtrl, 1, wxALL | wxEXPAND, 5);
 
-        vbox->Add(hbox, 0, wxEXPAND, 5);
+        // Add/Delete buttons
+        wxBoxSizer* btnBox = new wxBoxSizer(wxHORIZONTAL);
+        wxButton* addBtn = new wxButton(this, wxID_ANY, "Add Folder");
+        wxButton* delBtn = new wxButton(this, wxID_ANY, "Delete Folder");
+        btnBox->Add(addBtn, 0, wxALL, 5);
+        btnBox->Add(delBtn, 0, wxALL, 5);
+        vbox->Add(btnBox, 0, wxALIGN_LEFT);
 
-        m_checkList1 = new wxCheckListBox(this, wxID_ANY);
-        vbox->Add(m_checkList1, 1, wxALL | wxEXPAND, 5);
-
-        this->SetSizer(vbox);
+        SetSizer(vbox);
 
         // Bind events
-        m_dirPicker1->Bind(wxEVT_DIRPICKER_CHANGED, &FileBrowser::OnDirChanged, this);
-        m_checkList1->Bind(wxEVT_LISTBOX, &FileBrowser::OnFileSelected, this);
+        m_dirPicker->Bind(wxEVT_DIRPICKER_CHANGED, &FileBrowser::OnDirChanged, this);
+        m_listCtrl->Bind(wxEVT_LIST_ITEM_ACTIVATED, &FileBrowser::OnFileActivated, this);
+        addBtn->Bind(wxEVT_BUTTON, &FileBrowser::OnAddFolder, this);
+        delBtn->Bind(wxEVT_BUTTON, &FileBrowser::OnDeleteFolder, this);
     }
 
 private:
-    wxStaticText* m_staticText1;
-    wxDirPickerCtrl* m_dirPicker1;
-    wxCheckListBox* m_checkList1;
+    wxDirPickerCtrl* m_dirPicker;
+    wxListCtrl* m_listCtrl;
 
-    void OnDirChanged(wxFileDirPickerEvent& event)
+    wxULongLong GetFolderSize(const wxFileName& folder)
     {
-        wxString folder = event.GetPath();
-        m_checkList1->Clear();
+        wxULongLong total = 0;
+        wxDir dir(folder.GetFullPath());
+        if (!dir.IsOpened()) return total;
 
+        wxString name;
+        bool cont = dir.GetFirst(&name, "*", wxDIR_DIRS | wxDIR_FILES);
+        while (cont)
+        {
+            wxFileName fn(folder.GetFullPath(), name);
+            if (fn.DirExists())
+                total += GetFolderSize(fn);
+            else
+                total += fn.GetSize();
+            cont = dir.GetNext(&name);
+        }
+        return total;
+    }
+
+    static wxString FormatSize(wxULongLong size)
+    {
+        double sz = static_cast<double>(size.GetValue());
+        const char* units[] = { "B", "KB", "MB", "GB", "TB" };
+        int u = 0;
+        while (sz >= 1024.0 && u < 4) { sz /= 1024.0; u++; }
+        return wxString::Format("%.2f %s", sz, units[u]);
+    }
+
+    void RefreshFolderList(const wxString& folder)
+    {
+        m_listCtrl->DeleteAllItems();
         wxDir dir(folder);
         if (!dir.IsOpened()) return;
 
-        wxString filename;
-        bool cont = dir.GetFirst(&filename, "*", wxDIR_FILES | wxDIR_HIDDEN);
+        wxString name;
+        bool cont = dir.GetFirst(&name, "*", wxDIR_DIRS | wxDIR_FILES);
         while (cont)
         {
-            wxFileName fn(folder, filename);
-            m_checkList1->Append(fn.GetFullPath());
-            cont = dir.GetNext(&filename);
+            wxFileName fn(folder, name);
+            long index = m_listCtrl->InsertItem(m_listCtrl->GetItemCount(), fn.GetFullName());
+            if (fn.DirExists())
+            {
+                m_listCtrl->SetItem(index, 1, "Folder");
+                wxULongLong sz = GetFolderSize(fn);
+                m_listCtrl->SetItem(index, 2, FormatSize(sz));
+            }
+            else
+            {
+                m_listCtrl->SetItem(index, 1, "File");
+                m_listCtrl->SetItem(index, 2, FormatSize(fn.GetSize()));
+            }
+            cont = dir.GetNext(&name);
         }
     }
 
-    void OnFileSelected(wxCommandEvent& event)
+    void OnDirChanged(wxFileDirPickerEvent& event)
     {
-        wxString filepath = m_checkList1->GetStringSelection();
-        if (!filepath.IsEmpty())
+        RefreshFolderList(event.GetPath());
+    }
+
+    void OnFileActivated(wxListEvent& event)
+    {
+        wxString parent = m_dirPicker->GetPath();
+        wxString name = m_listCtrl->GetItemText(event.GetIndex());
+        wxFileName fn(parent, name);
+        if (fn.FileExists())
         {
-            auto* frame = new ImageFrame(nullptr, filepath);
+            auto* frame = new ImageFrame(nullptr, fn.GetFullPath());
             frame->Show();
         }
+        else if (fn.DirExists())
+        {
+            m_dirPicker->SetPath(fn.GetFullPath());
+            RefreshFolderList(fn.GetFullPath());
+        }
+    }
+
+    void OnAddFolder(wxCommandEvent&)
+    {
+        wxString parent = m_dirPicker->GetPath();
+        if (parent.IsEmpty()) return;
+        wxTextEntryDialog dlg(this, "Enter new folder name:", "Add Folder");
+        if (dlg.ShowModal() != wxID_OK) return;
+        wxString newName = dlg.GetValue();
+        wxFileName newFolder(parent, newName);
+        if (newFolder.DirExists()) { wxMessageBox("Folder exists!"); return; }
+        if (wxFileName::Mkdir(newFolder.GetFullPath(), wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL))
+            RefreshFolderList(parent);
+        else wxMessageBox("Failed to create folder.");
+    }
+
+    void OnDeleteFolder(wxCommandEvent&)
+    {
+        wxString parent = m_dirPicker->GetPath();
+        long sel = m_listCtrl->GetNextItem(-1, wxLIST_NEXT_ALL, wxLIST_STATE_SELECTED);
+        if (sel == -1) { wxMessageBox("Select a folder to delete."); return; }
+        wxString name = m_listCtrl->GetItemText(sel);
+        wxFileName folder(parent, name);
+        if (!folder.DirExists()) { wxMessageBox("Not a folder."); return; }
+        if (wxMessageBox("Delete " + folder.GetFullPath() + "?", "Confirm", wxYES_NO | wxICON_QUESTION) != wxYES) return;
+        if (wxFileName::Rmdir(folder.GetFullPath(), wxPATH_RMDIR_RECURSIVE))
+            RefreshFolderList(parent);
+        else wxMessageBox("Failed to delete folder.");
     }
 };
 
-// ================================================================
-// Application
-// ================================================================
+// MyApp
 class MyApp : public wxApp
 {
 public:
     bool OnInit() override
     {
-        wxFrame* frame = new wxFrame(nullptr, wxID_ANY, "File Browser",
-            wxDefaultPosition, wxSize(600, 400));
+        wxFrame* frame = new wxFrame(nullptr, wxID_ANY, "File Browser", wxDefaultPosition, wxSize(600, 400));
         new FileBrowser(frame);
         frame->Show();
         return true;
