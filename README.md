@@ -91,23 +91,6 @@ This project emphasizes **clear, reproducible baseline algorithms** to support m
 
 ---
 
-## Application Overview
-![Main GUI showing scattering rings, histogram, and results]
-file:///C:/Users/ermit/OneDrive/Pictures/Application%20Overview.png
-
-## File Browser and Data Loading
-![File browser with EDF, PNG, and CSV files]
-file:///C:/Users/ermit/OneDrive/Pictures/File%20Browser%20and%20Data%20Loading.png
-
-## Region of Interest & Radial Averaging
-![ROI selection and radial sweep configuration]
-file:///C:/Users/ermit/OneDrive/Pictures/Region%20of%20Interest.png
-file:///C:/Users/ermit/OneDrive/Pictures/Radial%20Averaging.png
-
-## Radial Average Output
-![Radial average plot generated from scattering data]
-file:///C:/Users/ermit/OneDrive/Pictures/Radial%20Average%20Output.png
-
 ## Author
 
 **Ermithe Tilusca**
