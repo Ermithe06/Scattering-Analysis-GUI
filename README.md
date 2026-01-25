@@ -91,6 +91,24 @@ This project emphasizes **clear, reproducible baseline algorithms** to support m
 
 ---
 
+**Note:** All application screenshots are located in the `main` branch of this repository
+
+## Web-Based Interface (In Progress)
+
+In parallel with the desktop application, a web-based interface is under active development to explore browser-accessible workflows for scattering data visualization and analysis.
+
+This prototype uses:
+- **Python (Flask)** for backend image processing and data handling
+- **JavaScript (HTML5 Canvas)** for interactive image viewing (zoom, pan)
+- **REST-style endpoints** for file upload and analysis requests
+
+The goal of this effort is to:
+- Provide lightweight access to core analysis features without requiring local compilation
+- Enable remote or collaborative use cases
+- Investigate future deployment options for teaching and rapid data inspection
+
+This web interface is currently experimental and does not yet implement the full feature set of the desktop GUI.
+
 ## Author
 
 **Ermithe Tilusca**
