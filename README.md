@@ -1,4 +1,5 @@
 # Scattering Analysis GUI
+http://10.2.246.6:5000
 
 ## Overview
 
@@ -108,7 +109,6 @@ The goal of this effort is to:
 - Investigate future deployment options for teaching and rapid data inspection
 
 This web interface is currently experimental and does not yet implement the full feature set of the desktop GUI.
-http://10.2.246.6:5000
 ## Author
 
 **Ermithe Tilusca**
