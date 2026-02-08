@@ -1,5 +1,5 @@
 # Scattering Analysis GUI
-Live Web App: http://10.2.246.6:5000
+Live Web App: http://127.0.0.1:5000/
 
 ## Overview
 
